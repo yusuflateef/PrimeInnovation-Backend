@@ -28,12 +28,35 @@ dotnet restore PrimeInnovation.sln --configfile NuGet.Config
 dotnet run --project PrimeInnovation.Api --launch-profile http
 ```
 
-On first start, EF creates the `PrimeInnovation` database and seeds demo data.
+On start, the API applies EF Core migrations; in Development (`Seed:Enabled`) it also seeds demo data into an empty database.
 
 Or open `PrimeInnovation.sln` in Visual Studio.
 
 - API: http://localhost:5080  
-- Swagger: http://localhost:5080/swagger  
+- Swagger: http://localhost:5080/swagger (Development only)  
+- Health: http://localhost:5080/health  
+
+### Migrations
+
+```bash
+dotnet ef migrations add <Name> -p src/PrimeInnovation.Infrastructure -s PrimeInnovation.Api -o Persistence/Migrations
+```
+
+A database created before migrations were introduced (via `EnsureCreated`) must be dropped once:
+`dotnet ef database drop -p src/PrimeInnovation.Infrastructure -s PrimeInnovation.Api`.
+
+### Secrets
+
+Nothing secret lives in `appsettings.json`. Locally use user-secrets; in production use environment variables
+(full list in [`PrimeInnovation.Api/.env.example`](PrimeInnovation.Api/.env.example)).
+
+```bash
+dotnet user-secrets set "Paystack:SecretKey" "sk_test_..." --project PrimeInnovation.Api
+dotnet user-secrets set "Paystack:PublicKey" "pk_test_..." --project PrimeInnovation.Api
+```
+
+Development uses a dev-only JWT key from `appsettings.Development.json`. Outside Development the API refuses to start
+unless `Jwt__Key` is a unique value of at least 32 bytes.
 
 ### SQL Server connection
 
@@ -57,9 +80,27 @@ Server=localhost\SQLEXPRESS;Database=PrimeInnovationDb;User Id=sa;Password=YOUR_
 | Instructor | ada@primedigitalacademy.com | Instructor@123 |
 | Admin | admin@primeinnovation.network | Admin@12345 |
 
+Demo data is seeded only when `Seed:Enabled` is true (Development). Public sign-up always creates Students;
+promote instructors/admins directly in the `Users` table.
+
 ## Paystack
 
-Set keys in `PrimeInnovation.Api/appsettings.json` under `Paystack`.
+Set `Paystack:SecretKey` / `Paystack:PublicKey` via user-secrets or environment variables (see above).
+
+Register the webhook in the Paystack dashboard so buyers are enrolled even if they close the tab after paying:
+`https://<api-domain>/api/payments/paystack/webhook` (signature-verified with your secret key).
+
+## Google sign-in
+
+Disabled unless `Google:ClientId` (OAuth Web Client ID) is set. `POST /api/auth/google` takes `{ "idToken": "..." }`
+and verifies it with Google before signing the user in.
+
+## Deployment
+
+Deploy as any ASP.NET Core 10 app (`dotnet publish PrimeInnovation.Api -c Release`). Set the variables in
+`.env.example`, including `FrontendUrl` / `Cors__Origins__0` for the separately hosted frontend and
+`ForwardedHeaders__Enabled=true` behind a proxy. Uploaded course files are written to `wwwroot/uploads`;
+mount persistent storage there. CI: `.github/workflows/ci.yml`.
 
 ## Email (SMTP) + SMS (Termii — Nigeria)
 
