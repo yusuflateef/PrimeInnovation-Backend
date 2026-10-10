@@ -17,6 +17,13 @@ public class PaystackSettings
                            !SecretKey.Contains("YOUR_", StringComparison.OrdinalIgnoreCase);
 }
 
+public class GoogleSettings
+{
+    /// <summary>OAuth 2.0 Web Client ID from Google Cloud Console. Google sign-in is disabled when empty.</summary>
+    public string ClientId { get; set; } = string.Empty;
+    public bool Enabled => !string.IsNullOrWhiteSpace(ClientId);
+}
+
 public class EmailSettings
 {
     public bool Enabled { get; set; }

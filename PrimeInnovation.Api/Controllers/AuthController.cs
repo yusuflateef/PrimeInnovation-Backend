@@ -17,7 +17,8 @@ public class AuthController(
     AppDbContext db,
     ITokenService tokens,
     IPasswordHasher passwords,
-    INotificationService notifications) : ControllerBase
+    INotificationService notifications,
+    IGoogleTokenValidator google) : ControllerBase
 {
     [HttpPost("register")]
     [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
@@ -27,10 +28,6 @@ public class AuthController(
         if (await db.Users.AnyAsync(u => u.Email == email))
             return Conflict(new { message = "Email already registered." });
 
-        var role = UserRole.Student;
-        if (string.Equals(request.Role, "Instructor", StringComparison.OrdinalIgnoreCase))
-            role = UserRole.Instructor;
-
         var phone = TermiiSmsService.NormalizeNigerianPhone(request.PhoneNumber);
 
         var user = new User
@@ -39,7 +36,8 @@ public class AuthController(
             Email = email,
             PhoneNumber = phone,
             PasswordHash = passwords.Hash(request.Password),
-            Role = role
+            // Public sign-up always creates students; instructors are promoted by an admin.
+            Role = UserRole.Student
         };
         db.Users.Add(user);
         await db.SaveChangesAsync();
@@ -65,15 +63,28 @@ public class AuthController(
     [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
     public async Task<ActionResult<AuthResponse>> GoogleSignIn(GoogleSignInRequest request)
     {
-        var email = request.Email.Trim().ToLowerInvariant();
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email || u.GoogleId == request.GoogleId);
+        if (!google.IsConfigured)
+            return NotFound(new { message = "Google sign-in is not enabled." });
+
+        // Identity comes only from the verified Google token, never from client-supplied fields.
+        var identity = await google.ValidateAsync(request.IdToken, HttpContext.RequestAborted);
+        if (identity is null)
+            return Unauthorized(new { message = "Invalid Google credential." });
+
+        var email = identity.Email.Trim().ToLowerInvariant();
+        var fullName = string.IsNullOrWhiteSpace(identity.FullName) ? email : identity.FullName;
+        var user = await db.Users.FirstOrDefaultAsync(u => u.GoogleId == identity.Subject)
+                   ?? await db.Users.FirstOrDefaultAsync(u => u.Email == email);
+        if (user is not null && user.GoogleId is not null && user.GoogleId != identity.Subject)
+            return Conflict(new { message = "This email is linked to a different Google account." });
+
         if (user is null)
         {
             user = new User
             {
-                FullName = request.FullName,
+                FullName = fullName,
                 Email = email,
-                GoogleId = request.GoogleId,
+                GoogleId = identity.Subject,
                 PasswordHash = passwords.Hash(Guid.NewGuid().ToString("N")),
                 Role = UserRole.Student
             };
@@ -83,9 +94,9 @@ public class AuthController(
         }
         else
         {
-            user.GoogleId ??= request.GoogleId;
+            user.GoogleId ??= identity.Subject;
             if (string.IsNullOrWhiteSpace(user.FullName))
-                user.FullName = request.FullName;
+                user.FullName = fullName;
             await db.SaveChangesAsync();
         }
 

@@ -12,7 +12,7 @@ namespace PrimeInnovation.Api.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class DashboardController(AppDbContext db) : ControllerBase
+public class DashboardController(AppDbContext db, ITokenService tokens) : ControllerBase
 {
     [HttpGet]
     [ProducesResponseType(typeof(DashboardDto), StatusCodes.Status200OK)]
@@ -42,7 +42,8 @@ public class DashboardController(AppDbContext db) : ControllerBase
     }
 
     [HttpPut("profile")]
-    public async Task<IActionResult> UpdateProfile(ProfileUpdateRequest request)
+    [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
+    public async Task<ActionResult<AuthResponse>> UpdateProfile(ProfileUpdateRequest request)
     {
         var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var user = await db.Users.FindAsync(userId);
@@ -55,7 +56,8 @@ public class DashboardController(AppDbContext db) : ControllerBase
         user.FullName = request.FullName.Trim();
         user.Email = email;
         await db.SaveChangesAsync();
-        return Ok(new { user.FullName, user.Email });
+        // Re-issue the token so its name/email claims match the updated profile.
+        return Ok(tokens.CreateToken(user));
     }
 }
 
