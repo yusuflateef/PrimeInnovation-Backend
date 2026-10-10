@@ -34,6 +34,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<Course>(e =>
         {
             e.HasIndex(x => x.Slug).IsUnique();
+            e.Property(x => x.Price).HasPrecision(18, 2);
             e.HasOne(x => x.InstructorUser)
                 .WithMany(x => x.InstructedCourses)
                 .HasForeignKey(x => x.InstructorUserId)
@@ -43,6 +44,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<Enrollment>(e =>
         {
             e.HasIndex(x => new { x.UserId, x.CourseId }).IsUnique();
+            e.Property(x => x.ProgressPercent).HasPrecision(18, 2);
             // A payment reference can only ever grant one enrollment.
             e.HasIndex(x => x.PaymentReference).IsUnique().HasFilter("[PaymentReference] IS NOT NULL");
             e.HasOne(x => x.User)

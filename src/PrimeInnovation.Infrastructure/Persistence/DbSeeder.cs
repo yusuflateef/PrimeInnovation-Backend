@@ -1,22 +1,14 @@
 ﻿using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Storage;
 using PrimeInnovation.Domain.Entities;
 
 namespace PrimeInnovation.Infrastructure.Persistence;
 
 public static class DbSeeder
 {
+    /// <summary>Inserts demo users/courses/content into an empty database. Schema is managed by EF migrations.</summary>
     public static async Task SeedAsync(AppDbContext db)
     {
-        await db.Database.EnsureCreatedAsync();
-
-        // EnsureCreated does nothing if the DB already exists empty — create tables then.
-        var creator = db.GetService<IRelationalDatabaseCreator>();
-        if (!await creator.HasTablesAsync())
-            await creator.CreateTablesAsync();
-
         if (!db.Users.Any())
         {
             var admin = new User

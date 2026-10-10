@@ -50,6 +50,8 @@ public static class DependencyInjection
                 configuration.GetConnectionString("Default")
                 ?? "Server=localhost\\SQLEXPRESS;Database=PrimeInnovationDb;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true"));
 
+        services.AddHealthChecks().AddDbContextCheck<AppDbContext>("database");
+
         return services;
     }
 }

@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>PrimeInnovation.Api</RootNamespace>
+    <UserSecretsId>7d0a6061-f546-48b5-9d03-2fc15b17bd6b</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>

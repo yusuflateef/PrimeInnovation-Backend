@@ -2,7 +2,8 @@
 
 public class JwtSettings
 {
-    public string Key { get; set; } = "PrimeInnovationNetwork_SuperSecret_Key_ChangeInProduction_2026!";
+    /// <summary>HMAC signing key (min 32 bytes). Supply via user-secrets or the Jwt__Key environment variable.</summary>
+    public string Key { get; set; } = string.Empty;
     public string Issuer { get; set; } = "PrimeInnovation.Api";
     public string Audience { get; set; } = "PrimeInnovation.Web";
     public int ExpiryHours { get; set; } = 24;

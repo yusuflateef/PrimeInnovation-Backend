@@ -1,10 +1,12 @@
 ﻿using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using PrimeInnovation.Application.DTOs;
 using PrimeInnovation.Application.Interfaces;
+using PrimeInnovation.Application.Options;
 using PrimeInnovation.Domain.Entities;
 using PrimeInnovation.Infrastructure.Notifications;
 using PrimeInnovation.Infrastructure.Persistence;
@@ -13,12 +15,16 @@ namespace PrimeInnovation.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[EnableRateLimiting("auth")]
 public class AuthController(
     AppDbContext db,
     ITokenService tokens,
     IPasswordHasher passwords,
     INotificationService notifications,
-    IGoogleTokenValidator google) : ControllerBase
+    IGoogleTokenValidator google,
+    IWebHostEnvironment env,
+    EmailSettings emailSettings,
+    TermiiSettings termiiSettings) : ControllerBase
 {
     [HttpPost("register")]
     [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
@@ -118,21 +124,19 @@ public class AuthController(
 
         await notifications.SendPasswordResetAsync(user.FullName, user.Email, user.PhoneNumber, token);
 
-        // Token only returned when notifications are not configured (local/dev convenience).
-        var exposeToken = !notificationsConfigured();
-        return Ok(new
+        // Local convenience only: with no email/SMS provider in Development, hand the token back directly.
+        // Elsewhere the response is identical whether or not the account exists (no user enumeration).
+        if (env.IsDevelopment() && !emailSettings.Enabled && !termiiSettings.Enabled)
         {
-            message = exposeToken
-                ? "Password reset token generated (notifications not configured)."
-                : "If the account exists, a reset link was sent by email/SMS.",
-            token = exposeToken ? token : null,
-            expiresAt = user.PasswordResetExpires,
-            channels = new
+            return Ok(new
             {
-                email = true,
-                sms = !string.IsNullOrWhiteSpace(user.PhoneNumber)
-            }
-        });
+                message = "Password reset token generated (notifications not configured).",
+                token,
+                expiresAt = user.PasswordResetExpires
+            });
+        }
+
+        return Ok(new { message = "If the account exists, a reset link was sent by email/SMS." });
     }
 
     [HttpPost("reset-password")]
@@ -152,6 +156,7 @@ public class AuthController(
     }
 
     [Authorize]
+    [DisableRateLimiting]
     [HttpGet("me")]
     public async Task<ActionResult<object>> Me()
     {
@@ -159,18 +164,5 @@ public class AuthController(
         var user = await db.Users.FindAsync(userId);
         if (user is null) return Unauthorized();
         return Ok(new { user.Id, user.FullName, user.Email, user.PhoneNumber, Role = user.Role.ToString() });
-    }
-
-    private bool notificationsConfigured()
-    {
-        // Resolved via scoped services already injected — check through HttpContext request services is heavy;
-        // use a simple heuristic: if either service would send, don't expose token.
-        // Controllers don't have direct settings; NotificationService swallows when not configured.
-        // Expose token only in Development when both providers are off — handled by checking IConfiguration via RequestServices.
-        var config = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
-        var emailOn = config.GetValue("Email:Enabled", false);
-        var termiiKey = config["Termii:ApiKey"] ?? "";
-        var smsOn = !string.IsNullOrWhiteSpace(termiiKey) && !termiiKey.Contains("YOUR_", StringComparison.OrdinalIgnoreCase);
-        return emailOn || smsOn;
     }
 }
