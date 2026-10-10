@@ -51,14 +51,14 @@ public static class DbSeeder
                 db.Materials.Add(new CourseMaterial
                 {
                     CourseId = course.Id,
-                    Title = $"{course.Title} â€” Slide Deck",
+                    Title = $"{course.Title} — Slide Deck",
                     FileUrl = $"/files/{course.Slug}-slides.pdf",
                     FileType = "pdf"
                 });
                 db.Materials.Add(new CourseMaterial
                 {
                     CourseId = course.Id,
-                    Title = $"{course.Title} â€” Dataset",
+                    Title = $"{course.Title} — Dataset",
                     FileUrl = $"/files/{course.Slug}-dataset.zip",
                     FileType = "zip"
                 });
@@ -124,7 +124,7 @@ public static class DbSeeder
                 {
                     SortOrder = 1,
                     Question = "What is Prime Innovation Network?",
-                    Answer = "Prime Innovation Network is our official corporate identity and brand authority â€” showcasing vision, programs, and partnerships. Prime Digital Academy is our learning portal powered by the Network."
+                    Answer = "Prime Innovation Network is our official corporate identity and brand authority — showcasing vision, programs, and partnerships. Prime Digital Academy is our learning portal powered by the Network."
                 },
                 new FaqItem
                 {
@@ -258,7 +258,7 @@ public static class DbSeeder
             Make("ai-fundamentals", "AI Fundamentals for Innovators", "Dr. Ada Okonkwo", "AI Research Lead",
                 "Former ML engineer with 10+ years building production AI systems across Africa and Europe.",
                 "6 Weeks", null, 4.9, 312, "Beginner", "AI & Machine Learning",
-                "Build a practical foundation in artificial intelligence â€” from core concepts to real-world applications. Ideal for beginners ready to enter the AI economy.",
+                "Build a practical foundation in artificial intelligence — from core concepts to real-world applications. Ideal for beginners ready to enter the AI economy.",
                 ["Machine Learning Basics", "Python for AI", "Model Evaluation", "Problem Framing"], 1840, true, "Online",
                 [
                     ("Introduction to AI", [("What is Artificial Intelligence?", "12 min"), ("History & Modern Applications", "18 min"), ("Ethics and Responsible AI", "15 min")]),
@@ -277,7 +277,7 @@ public static class DbSeeder
             Make("full-stack-web-development", "Full-Stack Web Development", "Tomiwa Adeyemi", "Lead Software Engineer",
                 "Builds scalable products for edtech and fintech. Passionate about teaching clean architecture.",
                 "12 Weeks", 85000, 4.7, 189, "Intermediate", "Web Development",
-                "Learn to design, build, and deploy modern web applications â€” from responsive frontends to secure APIs and databases.",
+                "Learn to design, build, and deploy modern web applications — from responsive frontends to secure APIs and databases.",
                 ["HTML/CSS", "JavaScript", "React", "APIs", "Deployment"], 1560, true, "Online",
                 [
                     ("Frontend Foundations", [("Semantic HTML & Modern CSS", "25 min"), ("JavaScript Deep Dive", "40 min")]),
@@ -286,7 +286,7 @@ public static class DbSeeder
             Make("ui-ux-product-design", "UI/UX Product Design", "Zainab Musa", "Product Design Director",
                 "Design systems specialist focused on inclusive, high-conversion digital experiences.",
                 "6 Weeks", 55000, 4.9, 142, "Beginner", "UI/UX",
-                "From research to high-fidelity prototypes â€” learn how to craft interfaces people love and businesses trust.",
+                "From research to high-fidelity prototypes — learn how to craft interfaces people love and businesses trust.",
                 ["User Research", "Wireframing", "Figma", "Design Systems"], 980, true, "Online",
                 [
                     ("Design Thinking", [("Empathy & Research", "20 min"), ("Flows & Wireframes", "26 min")])
@@ -302,7 +302,7 @@ public static class DbSeeder
             Make("data-science-bootcamp", "Applied Data Science Bootcamp", "Chinedu Bello", "Senior Data Analyst",
                 "Data lead who has trained 2,000+ analysts for startups, NGOs, and government programs.",
                 "10 Weeks", 95000, 4.7, 118, "Advanced", "Data Science",
-                "Go beyond analysis â€” build predictive models, evaluate rigorously, and ship data products that drive decisions.",
+                "Go beyond analysis — build predictive models, evaluate rigorously, and ship data products that drive decisions.",
                 ["Statistics", "Feature Engineering", "ML Pipelines", "Model Deployment"], 760, false, "Hybrid",
                 [
                     ("Modeling in Practice", [("Feature Stores & Pipelines", "30 min"), ("Deploying Predictions", "35 min")])
