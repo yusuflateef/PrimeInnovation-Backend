@@ -1,4 +1,5 @@
 ﻿using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -12,7 +13,12 @@ namespace PrimeInnovation.Api.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Authorize]
-public class PaymentsController(AppDbContext db, IConfiguration config, IPaystackService paystack, INotificationService notifications) : ControllerBase
+public class PaymentsController(
+    AppDbContext db,
+    IConfiguration config,
+    IPaystackService paystack,
+    INotificationService notifications,
+    ILogger<PaymentsController> logger) : ControllerBase
 {
     [HttpPost("initialize/{slug}")]
     [ProducesResponseType(typeof(PaymentInitResponse), StatusCodes.Status200OK)]
@@ -77,9 +83,6 @@ public class PaymentsController(AppDbContext db, IConfiguration config, IPaystac
     [HttpPost("confirm/{slug}")]
     public async Task<ActionResult<EnrollmentDto>> Confirm(string slug, [FromBody] EnrollRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.PaymentReference))
-            return BadRequest(new { message = "Payment reference is required." });
-
         var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var course = await db.Courses.FirstOrDefaultAsync(c => c.Slug == slug && c.Published);
         if (course is null) return NotFound(new { message = "Course not found." });
@@ -90,22 +93,12 @@ public class PaymentsController(AppDbContext db, IConfiguration config, IPaystac
 
         if (course.Price is null or 0)
         {
-            var free = new Enrollment
-            {
-                UserId = userId,
-                CourseId = course.Id,
-                PaymentProvider = "Free",
-                PaymentReference = request.PaymentReference,
-                PaymentStatus = "Paid"
-            };
-            db.Enrollments.Add(free);
-            course.StudentsCount += 1;
-            await db.SaveChangesAsync();
-            var freeUser = await db.Users.FindAsync(userId);
-            if (freeUser is not null)
-                await notifications.SendEnrollmentConfirmationAsync(freeUser.FullName, freeUser.Email, freeUser.PhoneNumber, course.Title);
-            return Ok(ToDto(free, course));
+            var (free, freeError) = await EnrollVerifiedAsync(userId, course, "Free", $"FREE-{Guid.NewGuid():N}"[..20]);
+            return free is null ? Conflict(new { message = freeError }) : Ok(ToDto(free, course));
         }
+
+        if (string.IsNullOrWhiteSpace(request.PaymentReference))
+            return BadRequest(new { message = "Payment reference is required." });
 
         if (!paystack.IsConfigured)
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new { message = "Paystack is not configured." });
@@ -114,32 +107,130 @@ public class PaymentsController(AppDbContext db, IConfiguration config, IPaystac
         if (!verify.Success)
             return BadRequest(new { message = verify.Message ?? "Payment not successful.", status = verify.Status, gateway = verify.GatewayResponse });
 
-        var expectedKobo = (int)Math.Round(course.Price.Value * 100m, MidpointRounding.AwayFromZero);
-        var paidKobo = (int)Math.Round(verify.AmountNgn * 100m, MidpointRounding.AwayFromZero);
-        if (paidKobo < expectedKobo)
-            return BadRequest(new { message = $"Paid amount ({verify.AmountNgn:N0} NGN) is less than course price ({course.Price.Value:N0} NGN)." });
+        // The transaction must have been initialized by this user for this course (metadata set in Initialize).
+        if (!string.Equals(verify.UserId, userId.ToString(), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(verify.CourseSlug, course.Slug, StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { message = "This payment does not belong to your account or this course." });
 
-        // Prevent reuse of the same successful reference across accounts.
-        if (await db.Enrollments.AnyAsync(e => e.PaymentReference == verify.Reference))
-            return Conflict(new { message = "This payment reference has already been used." });
+        var amountError = CheckAmount(course, verify);
+        if (amountError is not null)
+            return BadRequest(new { message = amountError });
+
+        var (enrollment, error) = await EnrollVerifiedAsync(userId, course, "Paystack", verify.Reference);
+        return enrollment is null ? Conflict(new { message = error }) : Ok(ToDto(enrollment, course));
+    }
+
+    /// <summary>
+    /// Paystack server-to-server notification. Enrolls the buyer even if they never return to the callback URL.
+    /// Configure in the Paystack dashboard as https://&lt;api-host&gt;/api/payments/paystack/webhook.
+    /// </summary>
+    [HttpPost("paystack/webhook")]
+    [AllowAnonymous]
+    public async Task<IActionResult> PaystackWebhook()
+    {
+        if (!paystack.IsConfigured) return NotFound();
+
+        using var reader = new StreamReader(Request.Body);
+        var body = await reader.ReadToEndAsync();
+        if (!paystack.IsValidWebhookSignature(body, Request.Headers["x-paystack-signature"]))
+            return Unauthorized();
+
+        string? eventName, reference;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            eventName = doc.RootElement.TryGetProperty("event", out var ev) ? ev.GetString() : null;
+            reference = doc.RootElement.TryGetProperty("data", out var data) && data.TryGetProperty("reference", out var r)
+                ? r.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return BadRequest();
+        }
+
+        // Acknowledge every other event so Paystack does not retry it.
+        if (eventName != "charge.success" || string.IsNullOrWhiteSpace(reference))
+            return Ok();
+
+        // Never trust the webhook payload's amount/metadata: re-verify with Paystack.
+        var verify = await paystack.VerifyAsync(reference);
+        if (!verify.Success || !Guid.TryParse(verify.UserId, out var userId) || string.IsNullOrWhiteSpace(verify.CourseSlug))
+        {
+            logger.LogWarning("Paystack webhook {Reference} could not be verified or lacks metadata ({Status}).", reference, verify.Status);
+            return Ok();
+        }
+
+        var course = await db.Courses.FirstOrDefaultAsync(c => c.Slug == verify.CourseSlug);
+        if (course is null || !await db.Users.AnyAsync(u => u.Id == userId))
+        {
+            logger.LogWarning("Paystack webhook {Reference}: unknown course {Slug} or user {UserId}.", reference, verify.CourseSlug, userId);
+            return Ok();
+        }
+
+        var amountError = CheckAmount(course, verify);
+        if (amountError is not null)
+        {
+            logger.LogWarning("Paystack webhook {Reference}: {Error}", reference, amountError);
+            return Ok();
+        }
+
+        var (enrollment, error) = await EnrollVerifiedAsync(userId, course, "Paystack", verify.Reference);
+        if (enrollment is null)
+            logger.LogWarning("Paystack webhook {Reference}: {Error}", reference, error);
+        return Ok();
+    }
+
+    private static string? CheckAmount(Course course, PaystackVerifyResult verify)
+    {
+        var price = course.Price ?? 0;
+        var expectedKobo = (int)Math.Round(price * 100m, MidpointRounding.AwayFromZero);
+        var paidKobo = (int)Math.Round(verify.AmountNgn * 100m, MidpointRounding.AwayFromZero);
+        return paidKobo < expectedKobo
+            ? $"Paid amount ({verify.AmountNgn:N0} NGN) is less than course price ({price:N0} NGN)."
+            : null;
+    }
+
+    /// <summary>
+    /// Creates the enrollment for an already-verified payment. Idempotent: shared by the browser
+    /// confirm call and the webhook, which can race each other for the same reference.
+    /// </summary>
+    private async Task<(Enrollment? Enrollment, string? Error)> EnrollVerifiedAsync(Guid userId, Course course, string provider, string reference)
+    {
+        var existing = await db.Enrollments.FirstOrDefaultAsync(e => e.UserId == userId && e.CourseId == course.Id);
+        if (existing is not null) return (existing, null);
+
+        if (await db.Enrollments.AnyAsync(e => e.PaymentReference == reference))
+            return (null, "This payment reference has already been used.");
 
         var enrollment = new Enrollment
         {
             UserId = userId,
             CourseId = course.Id,
-            PaymentProvider = "Paystack",
-            PaymentReference = verify.Reference,
+            PaymentProvider = provider,
+            PaymentReference = reference,
             PaymentStatus = "Paid"
         };
         db.Enrollments.Add(enrollment);
         course.StudentsCount += 1;
-        await db.SaveChangesAsync();
 
-        var paidUser = await db.Users.FindAsync(userId);
-        if (paidUser is not null)
-            await notifications.SendEnrollmentConfirmationAsync(paidUser.FullName, paidUser.Email, paidUser.PhoneNumber, course.Title);
+        try
+        {
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            // Lost a race on the (UserId, CourseId) or PaymentReference unique index.
+            db.ChangeTracker.Clear();
+            var winner = await db.Enrollments.FirstOrDefaultAsync(e => e.UserId == userId && e.CourseId == course.Id);
+            return winner is not null ? (winner, null) : (null, "This payment reference has already been used.");
+        }
 
-        return Ok(ToDto(enrollment, course));
+        var user = await db.Users.FindAsync(userId);
+        if (user is not null)
+            await notifications.SendEnrollmentConfirmationAsync(user.FullName, user.Email, user.PhoneNumber, course.Title);
+
+        return (enrollment, null);
     }
 
     [HttpGet("paystack/config")]

@@ -43,6 +43,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<Enrollment>(e =>
         {
             e.HasIndex(x => new { x.UserId, x.CourseId }).IsUnique();
+            // A payment reference can only ever grant one enrollment.
+            e.HasIndex(x => x.PaymentReference).IsUnique().HasFilter("[PaymentReference] IS NOT NULL");
             e.HasOne(x => x.User)
                 .WithMany(x => x.Enrollments)
                 .HasForeignKey(x => x.UserId)
