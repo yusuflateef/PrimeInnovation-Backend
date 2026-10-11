@@ -20,3 +20,6 @@ PrimeInnovation.Api/wwwroot/uploads/
 .github/
 Dockerfile
 .dockerignore
+
+# Tooling not needed in images
+scripts/

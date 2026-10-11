@@ -4,9 +4,18 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
   build:
+    name: Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,3 +24,67 @@ jobs:
           dotnet-version: 10.0.x
       - run: dotnet restore PrimeInnovation.sln --configfile NuGet.Config
       - run: dotnet build PrimeInnovation.sln --no-restore -c Release
+
+  images:
+    name: Images (build, smoke test, publish)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image names
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"   # GHCR requires lowercase
+          echo "API_IMAGE=ghcr.io/$owner/promix-api" >> "$GITHUB_ENV"
+          echo "MIGRATOR_IMAGE=ghcr.io/$owner/promix-migrator" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: runtime
+          load: true
+          tags: ${{ env.API_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=promix
+          cache-to: type=gha,scope=promix,mode=max
+
+      - name: Build migrator image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: migrator
+          load: true
+          tags: ${{ env.MIGRATOR_IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=promix
+          cache-to: type=gha,scope=promix,mode=max
+
+      - name: Smoke test (migrations + API against SQL Server)
+        run: bash scripts/smoke-test.sh "$API_IMAGE:${{ github.sha }}" "$MIGRATOR_IMAGE:${{ github.sha }}"
+
+      # Only main publishes, and only the exact images that just passed the smoke test.
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push images
+        if: env.PUBLISH == 'true'
+        run: |
+          for image in "$API_IMAGE" "$MIGRATOR_IMAGE"; do
+            docker tag "$image:${{ github.sha }}" "$image:latest"
+            docker push "$image:${{ github.sha }}"
+            docker push "$image:latest"
+          done
+          echo "### Published images" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`$API_IMAGE:${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`$MIGRATOR_IMAGE:${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
