@@ -118,7 +118,9 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await db.Database.MigrateAsync();
+    // Production runs migrations as a separate deploy step (Database__MigrateOnStartup=false).
+    if (app.Configuration.GetValue("Database:MigrateOnStartup", true))
+        await db.Database.MigrateAsync();
     if (app.Configuration.GetValue("Seed:Enabled", false))
         await DbSeeder.SeedAsync(db);
 }
