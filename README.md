@@ -48,7 +48,7 @@ A database created before migrations were introduced (via `EnsureCreated`) must 
 ### Secrets
 
 Nothing secret lives in `appsettings.json`. Locally use user-secrets; in production use environment variables
-(full list in [`PrimeInnovation.Api/.env.example`](PrimeInnovation.Api/.env.example)).
+(full list in [`deploy/.env.example`](deploy/.env.example)).
 
 ```bash
 dotnet user-secrets set "Paystack:SecretKey" "sk_test_..." --project PrimeInnovation.Api
@@ -97,10 +97,25 @@ and verifies it with Google before signing the user in.
 
 ## Deployment
 
-Deploy as any ASP.NET Core 10 app (`dotnet publish PrimeInnovation.Api -c Release`). Set the variables in
-`.env.example`, including `FrontendUrl` / `Cors__Origins__0` for the separately hosted frontend and
-`ForwardedHeaders__Enabled=true` behind a proxy. Uploaded course files are written to `wwwroot/uploads`;
-mount persistent storage there. CI: `.github/workflows/ci.yml`.
+Runs as Docker containers built by CI (`.github/workflows/ci.yml`):
+
+- **PRs:** build, build the `promix-api` and `promix-migrator` images, run `scripts/smoke-test.sh`
+  (throwaway SQL Server → migrations → API `/health`).
+- **main:** same, then push both images to `ghcr.io/yusuflateef/` tagged with the commit SHA and `latest`.
+
+On the server (`/opt/prod-app/backend/`), copy the files from [`deploy/`](deploy/):
+
+| File | Purpose |
+|------|---------|
+| `docker-compose.yml` | `api` (host networking, `127.0.0.1:8080`, uploads volume) and on-demand `migrator` |
+| `.env` (from `.env.example`, `chmod 600`) | Secrets: connection string, JWT key, Paystack, notifications |
+| `deploy.sh` | `./deploy.sh <tag>`: pull → migrate → restart → `/health` → roll back API on failure |
+
+Migrations run as a separate step (the API runs with `Database__MigrateOnStartup=false`). Rollback restores the
+previous API image only, so every migration must remain compatible with the previous release.
+
+Local image test: `docker build -t promix-api:local . && docker build --target migrator -t promix-migrator:local .`
+then `bash scripts/smoke-test.sh promix-api:local promix-migrator:local`.
 
 ## Email (SMTP) + SMS (Termii — Nigeria)
 
