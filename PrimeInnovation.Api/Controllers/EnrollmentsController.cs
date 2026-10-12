@@ -27,19 +27,17 @@ public class EnrollmentsController(AppDbContext db, INotificationService notific
         if (existing is not null)
             return Ok(ToDto(existing, course));
 
-        var isFree = course.Price is null or 0;
-        var provider = isFree ? "Free" : (string.IsNullOrWhiteSpace(request.PaymentProvider) ? "Paystack" : request.PaymentProvider);
-        var status = isFree || !string.IsNullOrWhiteSpace(request.PaymentReference) ? "Paid" : "Pending";
-
-        if (!isFree && status != "Paid")
-            return BadRequest(new { message = "Payment required. Initialize payment first." });
+        // Paid courses are only enrolled after Paystack verification (PaymentsController confirm/webhook).
+        // A client-supplied reference here is never trusted.
+        if (course.Price is not (null or 0))
+            return BadRequest(new { message = "Payment required. Start checkout via /api/payments/initialize." });
 
         var enrollment = new Enrollment
         {
             UserId = userId,
             CourseId = course.Id,
-            PaymentProvider = provider,
-            PaymentReference = request.PaymentReference ?? (isFree ? $"FREE-{Guid.NewGuid():N}"[..20] : null),
+            PaymentProvider = "Free",
+            PaymentReference = $"FREE-{Guid.NewGuid():N}"[..20],
             PaymentStatus = "Paid"
         };
         db.Enrollments.Add(enrollment);

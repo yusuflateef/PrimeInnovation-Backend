@@ -1,4 +1,5 @@
 ﻿using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -79,7 +80,49 @@ public class PaystackService(HttpClient http, PaystackSettings settings) : IPays
             amountNgn,
             parsed.Data.Customer?.Email,
             parsed.Message,
-            parsed.Data.GatewayResponse);
+            parsed.Data.GatewayResponse,
+            ReadMetadata(parsed.Data.Metadata, "user_id"),
+            ReadMetadata(parsed.Data.Metadata, "course_slug"));
+    }
+
+    public bool IsValidWebhookSignature(string payload, string? signature)
+    {
+        if (!settings.Enabled || string.IsNullOrWhiteSpace(signature)) return false;
+
+        var expected = HMACSHA512.HashData(Encoding.UTF8.GetBytes(settings.SecretKey), Encoding.UTF8.GetBytes(payload));
+        byte[] provided;
+        try
+        {
+            provided = Convert.FromHexString(signature.Trim());
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+        return CryptographicOperations.FixedTimeEquals(expected, provided);
+    }
+
+    // Paystack returns metadata as an object, or as a string when it was sent serialized/empty.
+    private static string? ReadMetadata(JsonElement metadata, string key)
+    {
+        if (metadata.ValueKind == JsonValueKind.String)
+        {
+            var raw = metadata.GetString();
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            try
+            {
+                using var doc = JsonDocument.Parse(raw);
+                return ReadMetadata(doc.RootElement.Clone(), key);
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        if (metadata.ValueKind != JsonValueKind.Object || !metadata.TryGetProperty(key, out var value))
+            return null;
+        return value.ValueKind == JsonValueKind.String ? value.GetString() : value.ToString();
     }
 
     private void EnsureAuth()
@@ -113,6 +156,7 @@ public class PaystackService(HttpClient http, PaystackSettings settings) : IPays
         [JsonPropertyName("gateway_response")]
         public string? GatewayResponse { get; set; }
         public PaystackCustomer? Customer { get; set; }
+        public JsonElement Metadata { get; set; }
     }
 
     private sealed class PaystackCustomer

@@ -1,0 +1,22 @@
+# Build output
+bin/
+obj/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+
+# User-uploaded content (runtime data)
+PrimeInnovation.Api/wwwroot/uploads/
+
+# Local secrets
+.env
+appsettings.*.local.json

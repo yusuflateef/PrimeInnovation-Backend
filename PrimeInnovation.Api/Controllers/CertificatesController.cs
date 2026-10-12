@@ -11,7 +11,7 @@ using PrimeInnovation.Infrastructure.Persistence;
 namespace PrimeInnovation.Api.Controllers;
 [ApiController]
 [Route("api/[controller]")]
-public class CertificatesController(AppDbContext db) : ControllerBase
+public class CertificatesController(AppDbContext db, IConfiguration config) : ControllerBase
 {
     [Authorize]
     [HttpGet("mine")]
@@ -78,9 +78,13 @@ public class CertificatesController(AppDbContext db) : ControllerBase
         return cert is null ? NotFound(new { message = "Certificate not found." }) : Ok(ToDto(cert));
     }
 
-    private static CertificateDto ToDto(Certificate c)
+    private CertificateDto ToDto(Certificate c)
     {
-        var verify = $"{c.VerificationUrl}?id={Uri.EscapeDataString(c.CertificateId)}";
+        // Point verification (and the QR code) at the frontend's public /verify/:id page.
+        var frontend = config["FrontendUrl"]?.TrimEnd('/');
+        var verify = string.IsNullOrWhiteSpace(frontend)
+            ? $"{c.VerificationUrl}?id={Uri.EscapeDataString(c.CertificateId)}"
+            : $"{frontend}/verify/{Uri.EscapeDataString(c.CertificateId)}";
         var qr = $"https://api.qrserver.com/v1/create-qr-code/?size=160x160&data={Uri.EscapeDataString(verify)}";
         return new(
             c.CertificateId,

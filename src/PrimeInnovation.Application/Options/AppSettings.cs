@@ -2,7 +2,8 @@
 
 public class JwtSettings
 {
-    public string Key { get; set; } = "PrimeInnovationNetwork_SuperSecret_Key_ChangeInProduction_2026!";
+    /// <summary>HMAC signing key (min 32 bytes). Supply via user-secrets or the Jwt__Key environment variable.</summary>
+    public string Key { get; set; } = string.Empty;
     public string Issuer { get; set; } = "PrimeInnovation.Api";
     public string Audience { get; set; } = "PrimeInnovation.Web";
     public int ExpiryHours { get; set; } = 24;
@@ -15,6 +16,13 @@ public class PaystackSettings
     public string BaseUrl { get; set; } = "https://api.paystack.co";
     public bool Enabled => !string.IsNullOrWhiteSpace(SecretKey) &&
                            !SecretKey.Contains("YOUR_", StringComparison.OrdinalIgnoreCase);
+}
+
+public class GoogleSettings
+{
+    /// <summary>OAuth 2.0 Web Client ID from Google Cloud Console. Google sign-in is disabled when empty.</summary>
+    public string ClientId { get; set; } = string.Empty;
+    public bool Enabled => !string.IsNullOrWhiteSpace(ClientId);
 }
 
 public class EmailSettings

@@ -1,0 +1,37 @@
+# Backend stack on the server: /opt/prod-app/backend/docker-compose.yml
+# The frontend runs as a separate compose project (/opt/prod-app/frontend).
+#
+#   ./deploy.sh <image-tag>                      normal deploy (pull -> migrate -> restart -> health check)
+#   docker compose --profile tools run --rm migrator   run migrations by hand
+name: promix-backend
+
+services:
+  api:
+    image: ghcr.io/yusuflateef/promix-api:${IMAGE_TAG:-latest}
+    container_name: promix-api
+    restart: unless-stopped
+    # Host networking: SQL Server runs on this machine at 127.0.0.1:1433 (bare metal).
+    # The API still binds to loopback only; host NGINX will be the public entry point.
+    network_mode: host
+    env_file: .env
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://127.0.0.1:8080
+      Database__MigrateOnStartup: "false"   # migrations run as a separate deploy step
+      ForwardedHeaders__Enabled: "true"     # only reachable via local NGINX, so forwarded headers are trusted
+    volumes:
+      - uploads:/app/wwwroot/uploads
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  migrator:
+    image: ghcr.io/yusuflateef/promix-migrator:${IMAGE_TAG:-latest}
+    profiles: ["tools"]   # never started by `up`; run explicitly
+    network_mode: host
+    env_file: .env        # only ConnectionStrings__Default is used
+
+volumes:
+  uploads:

@@ -1,10 +1,12 @@
 ﻿using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using PrimeInnovation.Application.DTOs;
 using PrimeInnovation.Application.Interfaces;
+using PrimeInnovation.Application.Options;
 using PrimeInnovation.Domain.Entities;
 using PrimeInnovation.Infrastructure.Notifications;
 using PrimeInnovation.Infrastructure.Persistence;
@@ -13,11 +15,16 @@ namespace PrimeInnovation.Api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[EnableRateLimiting("auth")]
 public class AuthController(
     AppDbContext db,
     ITokenService tokens,
     IPasswordHasher passwords,
-    INotificationService notifications) : ControllerBase
+    INotificationService notifications,
+    IGoogleTokenValidator google,
+    IWebHostEnvironment env,
+    EmailSettings emailSettings,
+    TermiiSettings termiiSettings) : ControllerBase
 {
     [HttpPost("register")]
     [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
@@ -27,10 +34,6 @@ public class AuthController(
         if (await db.Users.AnyAsync(u => u.Email == email))
             return Conflict(new { message = "Email already registered." });
 
-        var role = UserRole.Student;
-        if (string.Equals(request.Role, "Instructor", StringComparison.OrdinalIgnoreCase))
-            role = UserRole.Instructor;
-
         var phone = TermiiSmsService.NormalizeNigerianPhone(request.PhoneNumber);
 
         var user = new User
@@ -39,7 +42,8 @@ public class AuthController(
             Email = email,
             PhoneNumber = phone,
             PasswordHash = passwords.Hash(request.Password),
-            Role = role
+            // Public sign-up always creates students; instructors are promoted by an admin.
+            Role = UserRole.Student
         };
         db.Users.Add(user);
         await db.SaveChangesAsync();
@@ -65,15 +69,28 @@ public class AuthController(
     [ProducesResponseType(typeof(AuthResponse), StatusCodes.Status200OK)]
     public async Task<ActionResult<AuthResponse>> GoogleSignIn(GoogleSignInRequest request)
     {
-        var email = request.Email.Trim().ToLowerInvariant();
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email || u.GoogleId == request.GoogleId);
+        if (!google.IsConfigured)
+            return NotFound(new { message = "Google sign-in is not enabled." });
+
+        // Identity comes only from the verified Google token, never from client-supplied fields.
+        var identity = await google.ValidateAsync(request.IdToken, HttpContext.RequestAborted);
+        if (identity is null)
+            return Unauthorized(new { message = "Invalid Google credential." });
+
+        var email = identity.Email.Trim().ToLowerInvariant();
+        var fullName = string.IsNullOrWhiteSpace(identity.FullName) ? email : identity.FullName;
+        var user = await db.Users.FirstOrDefaultAsync(u => u.GoogleId == identity.Subject)
+                   ?? await db.Users.FirstOrDefaultAsync(u => u.Email == email);
+        if (user is not null && user.GoogleId is not null && user.GoogleId != identity.Subject)
+            return Conflict(new { message = "This email is linked to a different Google account." });
+
         if (user is null)
         {
             user = new User
             {
-                FullName = request.FullName,
+                FullName = fullName,
                 Email = email,
-                GoogleId = request.GoogleId,
+                GoogleId = identity.Subject,
                 PasswordHash = passwords.Hash(Guid.NewGuid().ToString("N")),
                 Role = UserRole.Student
             };
@@ -83,9 +100,9 @@ public class AuthController(
         }
         else
         {
-            user.GoogleId ??= request.GoogleId;
+            user.GoogleId ??= identity.Subject;
             if (string.IsNullOrWhiteSpace(user.FullName))
-                user.FullName = request.FullName;
+                user.FullName = fullName;
             await db.SaveChangesAsync();
         }
 
@@ -107,21 +124,19 @@ public class AuthController(
 
         await notifications.SendPasswordResetAsync(user.FullName, user.Email, user.PhoneNumber, token);
 
-        // Token only returned when notifications are not configured (local/dev convenience).
-        var exposeToken = !notificationsConfigured();
-        return Ok(new
+        // Local convenience only: with no email/SMS provider in Development, hand the token back directly.
+        // Elsewhere the response is identical whether or not the account exists (no user enumeration).
+        if (env.IsDevelopment() && !emailSettings.Enabled && !termiiSettings.Enabled)
         {
-            message = exposeToken
-                ? "Password reset token generated (notifications not configured)."
-                : "If the account exists, a reset link was sent by email/SMS.",
-            token = exposeToken ? token : null,
-            expiresAt = user.PasswordResetExpires,
-            channels = new
+            return Ok(new
             {
-                email = true,
-                sms = !string.IsNullOrWhiteSpace(user.PhoneNumber)
-            }
-        });
+                message = "Password reset token generated (notifications not configured).",
+                token,
+                expiresAt = user.PasswordResetExpires
+            });
+        }
+
+        return Ok(new { message = "If the account exists, a reset link was sent by email/SMS." });
     }
 
     [HttpPost("reset-password")]
@@ -141,6 +156,7 @@ public class AuthController(
     }
 
     [Authorize]
+    [DisableRateLimiting]
     [HttpGet("me")]
     public async Task<ActionResult<object>> Me()
     {
@@ -148,18 +164,5 @@ public class AuthController(
         var user = await db.Users.FindAsync(userId);
         if (user is null) return Unauthorized();
         return Ok(new { user.Id, user.FullName, user.Email, user.PhoneNumber, Role = user.Role.ToString() });
-    }
-
-    private bool notificationsConfigured()
-    {
-        // Resolved via scoped services already injected — check through HttpContext request services is heavy;
-        // use a simple heuristic: if either service would send, don't expose token.
-        // Controllers don't have direct settings; NotificationService swallows when not configured.
-        // Expose token only in Development when both providers are off — handled by checking IConfiguration via RequestServices.
-        var config = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
-        var emailOn = config.GetValue("Email:Enabled", false);
-        var termiiKey = config["Termii:ApiKey"] ?? "";
-        var smsOn = !string.IsNullOrWhiteSpace(termiiKey) && !termiiKey.Contains("YOUR_", StringComparison.OrdinalIgnoreCase);
-        return emailOn || smsOn;
     }
 }

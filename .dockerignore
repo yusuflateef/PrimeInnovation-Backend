@@ -1,0 +1,26 @@
+# Build output and IDE files
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+**/.idea/
+**/*.user
+**/*.suo
+
+# Secrets and dev-only config never go into an image
+**/.env
+**/appsettings.Development.json
+**/appsettings.*.local.json
+
+# Runtime data (persistent volume on the server)
+PrimeInnovation.Api/wwwroot/uploads/
+
+# Repo metadata
+.git/
+.github/
+Dockerfile
+.dockerignore
+
+# Tooling not needed in images
+scripts/
+deploy/

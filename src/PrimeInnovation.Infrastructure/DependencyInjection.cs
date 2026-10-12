@@ -19,6 +19,10 @@ public static class DependencyInjection
         services.AddScoped<ITokenService, TokenService>();
         services.AddScoped<IPasswordHasher, PasswordHasher>();
 
+        var googleSettings = configuration.GetSection("Google").Get<GoogleSettings>() ?? new GoogleSettings();
+        services.AddSingleton(googleSettings);
+        services.AddSingleton<IGoogleTokenValidator, GoogleTokenValidator>();
+
         var paystackSettings = configuration.GetSection("Paystack").Get<PaystackSettings>() ?? new PaystackSettings();
         services.AddSingleton(paystackSettings);
         services.AddHttpClient<IPaystackService, PaystackService>(client =>
@@ -45,6 +49,8 @@ public static class DependencyInjection
             options.UseSqlServer(
                 configuration.GetConnectionString("Default")
                 ?? "Server=localhost\\SQLEXPRESS;Database=PrimeInnovationDb;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true"));
+
+        services.AddHealthChecks().AddDbContextCheck<AppDbContext>("database");
 
         return services;
     }

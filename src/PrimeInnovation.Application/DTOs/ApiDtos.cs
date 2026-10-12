@@ -6,17 +6,13 @@ public record RegisterRequest(
     [Required, MaxLength(120)] string FullName,
     [Required, EmailAddress] string Email,
     [Required, MinLength(8)] string Password,
-    string? PhoneNumber = null,
-    string? Role = null);
+    string? PhoneNumber = null);
 
 public record LoginRequest(
     [Required, EmailAddress] string Email,
     [Required] string Password);
 
-public record GoogleSignInRequest(
-    [Required] string Email,
-    [Required] string FullName,
-    [Required] string GoogleId);
+public record GoogleSignInRequest([Required] string IdToken);
 
 public record ForgotPasswordRequest([Required, EmailAddress] string Email);
 public record ResetPasswordRequest(
